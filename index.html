@@ -219,6 +219,16 @@ textarea{resize:vertical;min-height:56px;width:100%;}
 .dl-chk-tag .dot{width:7px;height:7px;border-radius:50%;background:var(--border2);flex-shrink:0;}
 .dl-chk-tag.done .dot{background:var(--c2);}
 
+/* COST INCURRED SECTION */
+.cost-section{background:var(--s2);border:1px solid rgba(0,229,160,.2);border-radius:10px;padding:18px 20px;margin-top:4px;}
+.cost-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);}
+.cost-row:last-of-type{border-bottom:none;}
+.cost-label{font-size:13px;color:var(--dim);}
+.cost-input{width:130px;text-align:right;font-family:var(--f3);font-size:13px;}
+.cost-total-row{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:2px solid rgba(0,229,160,.3);}
+.cost-total-label{font-family:var(--f1);font-size:16px;font-weight:600;color:var(--c2);}
+.cost-total-val{font-family:var(--f3);font-size:20px;font-weight:600;color:var(--c2);}
+
 /* LOADING SPINNER */
 .loading{text-align:center;padding:48px;color:var(--muted);}
 .spinner{width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--c1);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px;}
@@ -481,6 +491,41 @@ textarea{resize:vertical;min-height:56px;width:100%;}
       <div class="fgi full"><label>Spare Parts Required / Carried</label><input type="text" id="dl-spares" placeholder="e.g. Sensor board x1, Power cable x2"></div>
       <div class="fgi full"><label>Issue Description / Remarks</label><textarea id="dl-notes" placeholder="Describe the site issue, actions taken…"></textarea></div>
     </div>
+
+    <div class="form-section-head" style="margin-top:22px;">Cost Incurred for Visit</div>
+    <div class="cost-section">
+      <div class="cost-row">
+        <span class="cost-label">🚗 Travel Cost</span>
+        <input type="number" id="dl-cost-travel" class="cost-input" placeholder="₹ 0" min="0" oninput="calcVisitCost()">
+      </div>
+      <div class="cost-row">
+        <span class="cost-label">🍱 Daily Allowance <span style="font-size:11px;color:var(--muted);">(Food + Travel)</span></span>
+        <input type="number" id="dl-cost-da" class="cost-input" placeholder="₹ 0" min="0" oninput="calcVisitCost()">
+      </div>
+      <div class="cost-row">
+        <span class="cost-label">📎 Other Cost</span>
+        <input type="number" id="dl-cost-other" class="cost-input" placeholder="₹ 0" min="0" oninput="calcVisitCost()">
+      </div>
+      <div class="cost-total-row">
+        <span class="cost-total-label">Total Cost</span>
+        <span class="cost-total-val" id="dl-cost-total">₹ 0</span>
+      </div>
+    </div>
+
+    <div class="fg" style="margin-top:18px;">
+      <div class="fgi full"><label>Spares Replaced in Visit</label><input type="text" id="dl-spares-replaced" placeholder="e.g. Relay module x1, Display board x1…"></div>
+      <div class="fgi"><label>Contract Type</label>
+        <select id="dl-contract-type">
+          <option value="">— Select Contract Type —</option>
+          <option value="AMC">AMC (Annual Maintenance Contract)</option>
+          <option value="CMC">CMC (Comprehensive Maintenance Contract)</option>
+          <option value="WARRANTY">WARRANTY</option>
+          <option value="SERVER">SERVER</option>
+          <option value="TENDER">TENDER</option>
+        </select>
+      </div>
+    </div>
+
     <div style="display:flex;justify-content:flex-end;margin-top:16px;gap:10px;">
       <button class="btn btn-s" onclick="resetDailyForm()">Reset</button>
       <button class="btn btn-g2" id="dl-save-btn" onclick="saveDailyLog()">Save to Google Sheets</button>
@@ -1269,6 +1314,13 @@ function openLogPicker(logs,site){
 let EDIT_LOG_ID = null;
 let CURRENT_DETAIL_LOG_ID = null;
 
+function calcVisitCost(){
+  const t=+document.getElementById('dl-cost-travel').value||0;
+  const d=+document.getElementById('dl-cost-da').value||0;
+  const o=+document.getElementById('dl-cost-other').value||0;
+  document.getElementById('dl-cost-total').textContent='₹ '+(t+d+o).toLocaleString('en-IN');
+}
+
 async function saveDailyLog(){
   if(!SHEET_URL){toast('Connect Google Sheets first — go to ⚙ Setup tab','warn');return;}
   const engId=document.getElementById('dl-eng').value;
@@ -1279,12 +1331,19 @@ async function saveDailyLog(){
   if(!site){toast('Enter the site name','err');return;}
   const eng=DB.engineers.find(e=>e.id===engId)||{};
   const isEdit=!!EDIT_LOG_ID;
+  const costTravel=+document.getElementById('dl-cost-travel').value||0;
+  const costDA=+document.getElementById('dl-cost-da').value||0;
+  const costOther=+document.getElementById('dl-cost-other').value||0;
   const log={
     id:isEdit?EDIT_LOG_ID:('dl'+Date.now()),
     engId, engineerName:eng.name||'', date, site,
     vtype:document.getElementById('dl-vtype').value,
     spares:document.getElementById('dl-spares').value.trim(),
     notes:document.getElementById('dl-notes').value.trim(),
+    costTravel, costDA, costOther,
+    costTotal:costTravel+costDA+costOther,
+    sparesReplaced:document.getElementById('dl-spares-replaced').value.trim(),
+    contractType:document.getElementById('dl-contract-type').value,
     preChecked:getCheckedArr('pre',PRE_CHECKS.length),
     onsiteChecked:getCheckedArr('onsite',ONSITE_CHECKS.length),
     postChecked:getCheckedArr('post',POST_CHECKS.length),
@@ -1303,8 +1362,13 @@ async function saveDailyLog(){
 
 function resetDailyForm(){
   EDIT_LOG_ID=null;
-  ['dl-site','dl-spares','dl-notes'].forEach(id=>document.getElementById(id).value='');
+  ['dl-site','dl-spares','dl-notes','dl-spares-replaced'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('dl-vtype').value='scheduled';
+  document.getElementById('dl-contract-type').value='';
+  document.getElementById('dl-cost-travel').value='';
+  document.getElementById('dl-cost-da').value='';
+  document.getElementById('dl-cost-other').value='';
+  document.getElementById('dl-cost-total').textContent='₹ 0';
   document.getElementById('dl-date').value=new Date().toISOString().split('T')[0];
   resetCG('pre',PRE_CHECKS.length);resetCG('onsite',ONSITE_CHECKS.length);resetCG('post',POST_CHECKS.length);
   // Reset edit-mode UI
@@ -1332,6 +1396,12 @@ function startEditDailyLog(id){
   document.getElementById('dl-vtype').value=l.vtype||'scheduled';
   document.getElementById('dl-spares').value=l.spares||'';
   document.getElementById('dl-notes').value=l.notes||'';
+  document.getElementById('dl-spares-replaced').value=l.sparesReplaced||'';
+  document.getElementById('dl-contract-type').value=l.contractType||'';
+  document.getElementById('dl-cost-travel').value=l.costTravel||'';
+  document.getElementById('dl-cost-da').value=l.costDA||'';
+  document.getElementById('dl-cost-other').value=l.costOther||'';
+  calcVisitCost();
   // Apply saved checkbox state from sheet
   (l.preChecked||[]).forEach((v,i)=>{const el=document.getElementById(`pre-item-${i}`);if(el)el.classList.toggle('checked',!!v);});
   (l.onsiteChecked||[]).forEach((v,i)=>{const el=document.getElementById(`onsite-item-${i}`);if(el)el.classList.toggle('checked',!!v);});
@@ -1404,8 +1474,18 @@ function openDailyDetail(id){
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;">
       <div class="dc"><div class="dc-l">Engineer</div><div class="dc-v" style="font-size:16px;">${eng.name}</div></div>
       <div class="dc"><div class="dc-l">Visit Type</div><div class="dc-v" style="font-size:16px;">${VTYPES[l.vtype]||l.vtype}</div></div>
-      ${l.spares?`<div class="dc" style="grid-column:1/-1;"><div class="dc-l">Spares / Parts</div><div style="font-size:13px;margin-top:4px;">${l.spares}</div></div>`:''}
+      ${l.spares?`<div class="dc" style="grid-column:1/-1;"><div class="dc-l">Spares / Parts Carried</div><div style="font-size:13px;margin-top:4px;">${l.spares}</div></div>`:''}
+      ${l.sparesReplaced?`<div class="dc" style="grid-column:1/-1;"><div class="dc-l">Spares Replaced in Visit</div><div style="font-size:13px;margin-top:4px;color:var(--c3);">${l.sparesReplaced}</div></div>`:''}
       ${l.notes?`<div class="dc" style="grid-column:1/-1;"><div class="dc-l">Remarks</div><div style="font-size:13px;margin-top:4px;color:var(--dim);line-height:1.5;">${l.notes}</div></div>`:''}
+      ${l.contractType?`<div class="dc"><div class="dc-l">Contract Type</div><div class="dc-v" style="font-size:15px;color:var(--c5);">${l.contractType}</div></div>`:''}
+      ${(l.costTotal||l.costTravel||l.costDA||l.costOther)?`<div class="dc ${l.contractType?'':''}style="${l.contractType?'':'grid-column:1/-1;'}"><div class="dc-l">Cost Incurred</div>
+        <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;font-size:12.5px;">
+          ${l.costTravel?`<div style="display:flex;justify-content:space-between;"><span style="color:var(--dim);">Travel</span><span style="font-family:var(--f3);">₹${(l.costTravel||0).toLocaleString('en-IN')}</span></div>`:''}
+          ${l.costDA?`<div style="display:flex;justify-content:space-between;"><span style="color:var(--dim);">Daily Allowance</span><span style="font-family:var(--f3);">₹${(l.costDA||0).toLocaleString('en-IN')}</span></div>`:''}
+          ${l.costOther?`<div style="display:flex;justify-content:space-between;"><span style="color:var(--dim);">Other</span><span style="font-family:var(--f3);">₹${(l.costOther||0).toLocaleString('en-IN')}</span></div>`:''}
+          <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:5px;margin-top:3px;"><span style="color:var(--c2);font-weight:600;">Total</span><span style="font-family:var(--f3);color:var(--c2);font-weight:600;">₹${((l.costTravel||0)+(l.costDA||0)+(l.costOther||0)).toLocaleString('en-IN')}</span></div>
+        </div>
+      </div>`:''}
     </div>
     <div style="font-family:var(--f3);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Pre-Visit (${(l.preChecked||[]).filter(Boolean).length}/${PRE_CHECKS.length})</div>
     <div class="dl-checks-display">${tags(PRE_CHECKS,l.preChecked)}</div>
@@ -1702,11 +1782,11 @@ function exportDailyCSV(){
   if(fd)logs=logs.filter(l=>l.date===fd);
   if(fe)logs=logs.filter(l=>l.engId===fe);
   if(fs)logs=logs.filter(l=>l.site===fs);
-  let csv='Date,Engineer,EmpID,Site,VisitType,PreChecks,OnSiteChecks,PostChecks,Spares,Notes\n';
+  let csv='Date,Engineer,EmpID,Site,VisitType,ContractType,PreChecks,OnSiteChecks,PostChecks,Spares,SparesReplaced,TravelCost,DailyAllowance,OtherCost,TotalCost,Notes\n';
   logs.forEach(l=>{
     const eng=DB.engineers.find(e=>e.id===l.engId)||{name:'Unknown',eid:'—'};
     const pD=(l.preChecked||[]).filter(Boolean).length,oD=(l.onsiteChecked||[]).filter(Boolean).length,poD=(l.postChecked||[]).filter(Boolean).length;
-    csv+=`${l.date},"${eng.name}",${eng.eid},"${l.site}",${VTYPES[l.vtype]||l.vtype},${pD}/${PRE_CHECKS.length},${oD}/${ONSITE_CHECKS.length},${poD}/${POST_CHECKS.length},"${l.spares||''}","${(l.notes||'').replace(/"/g,"'")}"\n`;
+    csv+=`${l.date},"${eng.name}",${eng.eid},"${l.site}",${VTYPES[l.vtype]||l.vtype},${l.contractType||''},${pD}/${PRE_CHECKS.length},${oD}/${ONSITE_CHECKS.length},${poD}/${POST_CHECKS.length},"${l.spares||''}","${l.sparesReplaced||''}",${l.costTravel||0},${l.costDA||0},${l.costOther||0},${(l.costTravel||0)+(l.costDA||0)+(l.costOther||0)},"${(l.notes||'').replace(/"/g,"'")}"\n`;
   });
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download=`daily_log_${fd||'all'}.csv`;a.click();
