@@ -673,10 +673,11 @@ const COLS= ['#00c2ff','#00e5a0','#ffb800','#b57cfb','#ff7eb3','#ff5c5c','#4dc8f
 const VTYPES = {scheduled:'Scheduled',emergency:'Emergency',installation:'Installation',followup:'Follow-up'};
 
 const PRE_CHECKS = [
-  'Diagnose site issue remotely (offline/sensor/connectivity)',
-  'Submit pre-troubleshoot list to backend team',
+  'Diagnose site issue remotely',
+  'Informed the client on call for site visit',
+  'Email sent to the client about the visit',
   'Confirm spare requirements & arrange before visit',
-  'Verify internet connectivity with support coordinators',
+  'Verify internet connectivity',
   'Confirm reason of site offline / sensor issue with backend',
   'Check AMC/CMC payment status & pending dues',
   'Check missing hardware or pending deliveries to client',
@@ -700,13 +701,13 @@ const ONSITE_CHECKS = [
 ];
 const POST_CHECKS = [
   'Remotely monitor site for 2 days post-visit',
-  'Share brief service report with support coordinators',
+  'Share brief service report',
   'Inform client of preventive measures going forward',
   'Update master client database',
   'Follow up on payment if spares supplied',
   'Confirm site is fully live & data flowing',
-  'Report any outstanding payment issues ',
-  'Brief email sent to client with all details',
+  'Report any outstanding payment issues',
+  'Brief email sent to client with all details after visit and next visit schedule',
   'Took feedback for the visit from the client',
   
 ];
