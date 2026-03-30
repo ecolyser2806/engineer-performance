@@ -590,6 +590,7 @@ textarea{resize:vertical;min-height:56px;width:100%;}
       <div class="fgi"><label>Positive Client Feedbacks (150+ words, official email)</label><input type="number" id="eFb" placeholder="e.g. 10" oninput="calcPrev()" min="0"></div>
       <div class="fgi full"><label>CMC Site Management Efficiency (%)</label>
         <select id="eCmc" onchange="calcPrev()">
+          <option value="0">— Select efficiency % —</option>
           <option value="95">90–100% — Outstanding → ₹1,000</option>
           <option value="75">70–89% — Good → ₹700</option>
           <option value="55">50–69% — Average → ₹500</option>
@@ -782,10 +783,11 @@ function calc(r){
   // Display: show accrued credit this month, flag if it's a payout month
   // For monthly display: ev=0 → credit ₹2000 (manager-level proxy), ev=1 → ₹1000, 2+ → ₹0
   // Actual quarterly payout = ₹250 × eligible sites (entered in "Sites Managed" field)
-  const vMonthly = ev===0?2000:ev===1?1000:0; // monthly credit proxy
-  // Quarterly actual: ₹250 × sites if this is a payout month, else 0
-  const vQuarterly = (sites > 0 && isQuarterlyPayoutMonth(month, year)) ? (ev===0 ? sites*250 : ev===1 ? Math.floor(sites*250*0.5) : 0) : 0;
-  // v = quarterly actual if available, else monthly proxy for tracking
+  // Monthly proxy only shown when sites > 0, else 0
+  const vMonthly = sites>0 ? (ev===0?sites*250:ev===1?Math.floor(sites*250*0.5):0) : 0;
+  // Quarterly actual: ₹250 × sites only on payout months
+  const vQuarterly = (sites>0 && isQuarterlyPayoutMonth(month,year)) ? (ev===0?sites*250:ev===1?Math.floor(sites*250*0.5):0) : 0;
+  // v = show payout on payout months, else show projected (based on sites entered)
   const v = vQuarterly > 0 ? vQuarterly : vMonthly;
 
   // 02 Spare Sales — flat 1% on payment received
@@ -1574,7 +1576,7 @@ function prefillRec(){
   } else {
     ['eSp','eOc','eBb','eFb','eNt','eSites'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('eIn').value=d.install||'';
-    document.getElementById('eCmc').value=95;
+    document.getElementById('eCmc').value=0;
   }
   calcPrev();
 }
