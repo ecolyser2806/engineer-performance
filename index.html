@@ -923,7 +923,7 @@ textarea{resize:vertical;min-height:56px;width:100%;}
 // CONFIG — paste your Google Apps Script Web App URL here after setup
 // ═══════════════════════════════════════════════════════════════
 const URL_KEY = 'ecotrack_sheet_url';
-let SHEET_URL = localStorage.getItem(URL_KEY) || 'https://script.google.com/macros/s/AKfycbyEtOaM0HUu2ain8gLW2S8u3Th6e6KDa6cqINyVOHUNfirBjPU_jNxqlm4RpaD54xry/exec';
+let SHEET_URL = localStorage.getItem(URL_KEY) || '';
 
 // ═══════════════════════════════════════════════════════════════
 // IN-MEMORY DATA STORE (loaded from Google Sheets on startup)
@@ -1042,6 +1042,22 @@ function hodSignals(l){
   // FLAG 6: Log saved BEFORE visit date (future-dated visit with past save)
   if(savedMs&&visitMs&&visitMs>savedMs+86400000)
     signals.push({type:'err',msg:'Log saved BEFORE the visit date — review immediately',ts:null});
+
+  // FLAG 7: Log was edited (retick timestamps present)
+  const allReticks=[...(l.preRetickAt||[]),...(l.onsiteRetickAt||[]),...(l.postRetickAt||[])].filter(Boolean);
+  if(allReticks.length>0){
+    const firstRetick=Math.min(...allReticks);
+    const hoursAfterSave=savedMs?Math.round((firstRetick-savedMs)/3600000):null;
+    const lateItems=[
+      ...(PRE_CHECKS_DATA.map((d,i)=>(l.preRetickAt||[])[i]&&!(l.preCheckedAt||[])[i]?d[0]:null)),
+      ...(ONSITE_CHECKS_DATA.map((d,i)=>(l.onsiteRetickAt||[])[i]&&!(l.onsiteCheckedAt||[])[i]?d[0]:null)),
+      ...(POST_CHECKS_DATA.map((d,i)=>(l.postRetickAt||[])[i]&&!(l.postCheckedAt||[])[i]?d[0]:null)),
+    ].filter(Boolean);
+    const msg=lateItems.length>0
+      ? `Log edited: ${allReticks.length} item(s) re-ticked · ${lateItems.length} item(s) added ONLY in edit (never originally ticked)`
+      : `Log edited after initial save: ${allReticks.length} item(s) re-ticked${hoursAfterSave!==null?' · '+hoursAfterSave+'h after first save':''}`;
+    signals.push({type:lateItems.length>0?'err':'warn', msg, ts:null});
+  }
 
   return signals;
 }
@@ -1344,6 +1360,11 @@ async function loadFromSheet(){
       // v8 extended fields
       diagStatus:r.DiagStatus||'', diagNote:r.DiagNote||'',
       confirmedReason:r.ConfirmedReason||'', deviceTesting:r.DeviceTesting||'',
+      // v9 retick timestamps (HOD-only)
+      preRetickAt:parseTimestamps(r.PreRetick_Timestamps,PRE_CHECKS.length),
+      onsiteRetickAt:parseTimestamps(r.OnsiteRetick_Timestamps,ONSITE_CHECKS.length),
+      postRetickAt:parseTimestamps(r.PostRetick_Timestamps,POST_CHECKS.length),
+      isEditedLog:r.IsEditedLog==='TRUE'||r.IsEditedLog===true,
     }));
     DB.sites=(json.sites||[]).map(r=>({id:r.ID,name:r.Name}));
     setSyncStatus('ok');
@@ -1472,7 +1493,9 @@ function goPageByName(name){
 // CHECKBOXES
 // ═══════════════════════════════════════════════════════════════
 // Per-item tick timestamps — keyed by pfx, index → Unix ms or null
-const TICK_TIMES = {pre:[],onsite:[],post:[]};
+const TICK_TIMES    = {pre:[],onsite:[],post:[]};  // original tick timestamps
+const RETICK_TIMES  = {pre:[],onsite:[],post:[]};  // timestamps of re-ticks during edits
+let   IS_EDIT_MODE  = false;                        // true when editing an existing log
 
 function buildCheckboxes(){
   renderCG('pre-checks',PRE_CHECKS,'pre');
@@ -1542,7 +1565,18 @@ function toggleCheckItem(pfx,idx,el){
   const isChecked=el.classList.contains('checked');
   const now=Date.now();
   if(!TICK_TIMES[pfx])TICK_TIMES[pfx]=[];
-  TICK_TIMES[pfx][idx]=isChecked?now:null;
+  if(!RETICK_TIMES[pfx])RETICK_TIMES[pfx]=[];
+  if(IS_EDIT_MODE){
+    // In edit mode: always record a retick timestamp — original timestamps are preserved from the sheet
+    RETICK_TIMES[pfx][idx]=isChecked?now:null;
+    // If no original timestamp exists (item was never ticked before), also set one
+    if(isChecked && !TICK_TIMES[pfx][idx]) TICK_TIMES[pfx][idx]=now;
+    if(!isChecked) TICK_TIMES[pfx][idx]=null;
+  } else {
+    // Fresh log — record as original tick
+    TICK_TIMES[pfx][idx]=isChecked?now:null;
+    RETICK_TIMES[pfx][idx]=null;
+  }
   // Show/hide sub-field panel (for special items)
   const sub=document.getElementById(pfx+'-sub-'+idx);
   if(sub)sub.style.display=isChecked?'block':'none';
@@ -1644,8 +1678,12 @@ function getCheckedArr(pfx,len){
 function getCheckedTimestamps(pfx,len){
   return Array.from({length:len},(_,i)=>TICK_TIMES[pfx]?.[i]||null);
 }
+function getRetickTimestamps(pfx,len){
+  return Array.from({length:len},(_,i)=>RETICK_TIMES[pfx]?.[i]||null);
+}
 function resetCG(pfx,len){
   TICK_TIMES[pfx]=[];
+  RETICK_TIMES[pfx]=[];
   for(let i=0;i<len;i++){const el=document.getElementById(`${pfx}-item-${i}`);if(el)el.classList.remove('checked');}
 }
 
@@ -2121,6 +2159,10 @@ async function saveDailyLog(){
     preCheckedAt:getCheckedTimestamps('pre',PRE_CHECKS.length),
     onsiteCheckedAt:getCheckedTimestamps('onsite',ONSITE_CHECKS.length),
     postCheckedAt:getCheckedTimestamps('post',POST_CHECKS.length),
+    preRetickAt:getRetickTimestamps('pre',PRE_CHECKS.length),
+    onsiteRetickAt:getRetickTimestamps('onsite',ONSITE_CHECKS.length),
+    postRetickAt:getRetickTimestamps('post',POST_CHECKS.length),
+    isEditedLog:IS_EDIT_MODE,
     savedAt:Date.now(),
   };
   // Extended sub-field data
@@ -2148,6 +2190,7 @@ async function saveDailyLog(){
 
 function resetDailyForm(){
   EDIT_LOG_ID=null;
+  IS_EDIT_MODE=false;
   ['dl-site','dl-spares','dl-notes','dl-spares-replaced','dl-email-link','dl-photo-link','dl-in-time','dl-out-time','dl-live-evidence'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('dl-vtype').value='scheduled';
   document.getElementById('dl-contract-type').value='';
@@ -2198,10 +2241,15 @@ function startEditDailyLog(id){
   (l.preChecked||[]).forEach((v,i)=>{const el=document.getElementById(`pre-item-${i}`);if(el)el.classList.toggle('checked',!!v);});
   (l.onsiteChecked||[]).forEach((v,i)=>{const el=document.getElementById(`onsite-item-${i}`);if(el)el.classList.toggle('checked',!!v);});
   (l.postChecked||[]).forEach((v,i)=>{const el=document.getElementById(`post-item-${i}`);if(el)el.classList.toggle('checked',!!v);});
-  // Restore tick timestamps (if available from when log was originally saved)
+  // Restore original tick timestamps from sheet
   TICK_TIMES.pre=(l.preCheckedAt||[]).map((t,i)=>(l.preChecked||[])[i]?t:null);
   TICK_TIMES.onsite=(l.onsiteCheckedAt||[]).map((t,i)=>(l.onsiteChecked||[])[i]?t:null);
   TICK_TIMES.post=(l.postCheckedAt||[]).map((t,i)=>(l.postChecked||[])[i]?t:null);
+  // Restore retick timestamps if any exist from a previous edit
+  RETICK_TIMES.pre=(l.preRetickAt||[]).map((t,i)=>(l.preChecked||[])[i]?t:null);
+  RETICK_TIMES.onsite=(l.onsiteRetickAt||[]).map((t,i)=>(l.onsiteChecked||[])[i]?t:null);
+  RETICK_TIMES.post=(l.postRetickAt||[]).map((t,i)=>(l.postChecked||[])[i]?t:null);
+  IS_EDIT_MODE=true;
   document.getElementById('dl-form-title').textContent=`✏️ Editing: ${eng.name} · ${df} · ${l.site}`;
   document.getElementById('dl-edit-banner').style.display='flex';
   document.getElementById('dl-form-card').style.borderColor='rgba(255,184,0,.4)';
@@ -2852,50 +2900,114 @@ function hodSaveNote(logId,note){
 }
 
 function buildTickTimeline(l){
-  const allTs=[
-    ...(l.preCheckedAt||[]).map((t,i)=>t?{t,label:PRE_CHECKS_DATA[i]?.[0]||'Pre '+i,w:PRE_CHECKS_DATA[i]?.[1]||1,section:'PRE'}:null),
-    ...(l.onsiteCheckedAt||[]).map((t,i)=>t?{t,label:ONSITE_CHECKS_DATA[i]?.[0]||'On-site '+i,w:ONSITE_CHECKS_DATA[i]?.[1]||1,section:'ONSITE'}:null),
-    ...(l.postCheckedAt||[]).map((t,i)=>t?{t,label:POST_CHECKS_DATA[i]?.[0]||'Post '+i,w:POST_CHECKS_DATA[i]?.[1]||1,section:'POST'}:null)
-  ].filter(Boolean).sort((a,b)=>a.t-b.t);
+  // Build combined original + retick event list
+  const allData=[
+    ...(PRE_CHECKS_DATA.map((d,i)=>({label:d[0],w:d[1],section:'PRE',
+      orig:(l.preCheckedAt||[])[i]||null,
+      retick:(l.preRetickAt||[])[i]||null,
+      checked:(l.preChecked||[])[i]||false}))),
+    ...(ONSITE_CHECKS_DATA.map((d,i)=>({label:d[0],w:d[1],section:'ONSITE',
+      orig:(l.onsiteCheckedAt||[])[i]||null,
+      retick:(l.onsiteRetickAt||[])[i]||null,
+      checked:(l.onsiteChecked||[])[i]||false}))),
+    ...(POST_CHECKS_DATA.map((d,i)=>({label:d[0],w:d[1],section:'POST',
+      orig:(l.postCheckedAt||[])[i]||null,
+      retick:(l.postRetickAt||[])[i]||null,
+      checked:(l.postChecked||[])[i]||false}))),
+  ];
 
-  if(!allTs.length){
-    return`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
-      <div style="font-family:var(--f3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);">⏱ Tick Timestamps</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px;">No timestamps recorded — log was saved before timestamp tracking was enabled, or this is a legacy record.</div>
+  // Build flat event list: each tick (orig or retick) is one event
+  const events=[];
+  allData.forEach(d=>{
+    if(d.orig)   events.push({t:d.orig,   label:d.label,w:d.w,section:d.section,kind:'ORIGINAL'});
+    if(d.retick) events.push({t:d.retick, label:d.label,w:d.w,section:d.section,kind:'RETICK'});
+  });
+  events.sort((a,b)=>a.t-b.t);
+
+  // Count totals
+  const hasOrig  = allData.some(d=>d.orig);
+  const hasRetick= allData.some(d=>d.retick);
+  const wasEdited= l.isEditedLog || hasRetick;
+
+  // Items ticked in edit but never originally ticked — late additions
+  const lateItems= allData.filter(d=>d.retick&&!d.orig&&d.checked);
+
+  if(!hasOrig && !hasRetick){
+    return`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;background:rgba(255,92,92,.04);border-radius:0 0 8px 8px;padding:12px 14px;">
+      <div style="font-family:var(--f3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--c4);margin-bottom:6px;">⏱ HOD Tick Audit Trail</div>
+      <div style="font-size:12.5px;color:var(--c4);font-weight:500;">⚠ No timestamps at all — this log has zero tick records.</div>
+      <div style="font-size:11.5px;color:var(--dim);margin-top:4px;">This means all checkboxes were either never ticked in a browser session, or this is a legacy record saved before timestamp tracking. HOD should treat the checklist score as unverifiable.</div>
     </div>`;
   }
 
-  const tMin=allTs[0].t, tMax=allTs[allTs.length-1].t;
-  const spanMs=tMax-tMin;
-  const spanSec=Math.round(spanMs/1000);
-  const spanStr=spanSec<60?spanSec+'s':spanSec<3600?Math.floor(spanSec/60)+'m '+spanSec%60+'s':Math.floor(spanSec/3600)+'h '+Math.floor((spanSec%3600)/60)+'m';
-  const verdict=spanSec<120?{col:'var(--c4)',txt:'⛔ SUSPICIOUS — all items ticked in under 2 minutes'}
-               :spanSec<300?{col:'var(--c3)',txt:'⚠ Review advised — ticked within 5 minutes'}
-               :{col:'var(--c2)',txt:'✓ Spread naturally over time'};
+  // Compute span for original ticks
+  const origTs=events.filter(e=>e.kind==='ORIGINAL').map(e=>e.t);
+  const retickTs=events.filter(e=>e.kind==='RETICK').map(e=>e.t);
+  const tMin=Math.min(...events.map(e=>e.t));
+  const tMax=Math.max(...events.map(e=>e.t));
+  const origSpanSec= origTs.length>1?Math.round((Math.max(...origTs)-Math.min(...origTs))/1000):0;
+  const spanStr= s=>s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';
 
-  const rows=allTs.map(x=>{
+  // Original tick verdict
+  const origVerdict=
+    origTs.length===0            ? {col:'var(--c3)', txt:'No original ticks — all ticks were during edits'}
+    : origSpanSec<120            ? {col:'var(--c4)', txt:'⛔ ALL ticked in under 2 min — suspicious bulk tick'}
+    : origSpanSec<300            ? {col:'var(--c3)', txt:'⚠ Ticked within 5 minutes — review recommended'}
+    :                              {col:'var(--c2)', txt:'✓ Natural spread over time'};
+
+  // Rows
+  const wCol=w=>w===3?'var(--c4)':w===2?'var(--c3)':'var(--c1)';
+  const rows=events.map((x,idx)=>{
     const off=Math.round((x.t-tMin)/1000);
     const offStr=off<60?'+'+off+'s':'+'+Math.floor(off/60)+'m'+(off%60?off%60+'s':'');
-    const secColor=x.w===3?'var(--c4)':x.w===2?'var(--c3)':'var(--c1)';
-    return`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid rgba(26,45,66,.3);">
+    const isRetick=x.kind==='RETICK';
+    const rowBg=isRetick?'rgba(255,184,0,.05)':'transparent';
+    const rowBorder=isRetick?'rgba(255,184,0,.2)':'rgba(26,45,66,.3)';
+    return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid ${rowBorder};background:${rowBg};">
       <span style="font-family:var(--f3);font-size:10px;color:var(--muted);min-width:42px;flex-shrink:0;">${offStr}</span>
-      <span style="width:7px;height:7px;border-radius:50%;background:${secColor};flex-shrink:0;" title="Weight ${x.w}"></span>
-      <span style="flex:1;font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${x.label}</span>
+      <span style="width:7px;height:7px;border-radius:50%;background:${isRetick?'var(--c3)':wCol(x.w)};flex-shrink:0;" title="${isRetick?'Re-tick during edit':'Original tick'}"></span>
+      <span style="flex:1;font-size:11.5px;color:${isRetick?'var(--c3)':'var(--dim)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${x.label}</span>
+      <span style="font-family:var(--f3);font-size:9px;padding:1px 6px;border-radius:3px;background:${isRetick?'rgba(255,184,0,.12)':'rgba(0,194,255,.08)'};color:${isRetick?'var(--c3)':'var(--muted)'};border:1px solid ${isRetick?'rgba(255,184,0,.25)':'rgba(0,194,255,.15)'};">${isRetick?'🔄 RETICK':'1st TICK'}</span>
       <span style="font-family:var(--f3);font-size:9.5px;color:var(--muted);flex-shrink:0;">${fmtTs(x.t)}</span>
     </div>`;
   }).join('');
 
+  // Late items summary
+  const lateHtml=lateItems.length?`
+    <div style="margin-top:10px;background:rgba(255,92,92,.06);border:1px solid rgba(255,92,92,.25);border-radius:7px;padding:9px 12px;">
+      <div style="font-family:var(--f3);font-size:10px;color:var(--c4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">🚩 ${lateItems.length} item(s) ticked ONLY during edit — never ticked on original submission</div>
+      ${lateItems.map(d=>`<div style="font-size:11.5px;color:var(--dim);padding:2px 0;">• ${d.label}</div>`).join('')}
+    </div>`:'';
+
   return`<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-      <div style="font-family:var(--f3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);">⏱ Tick Timeline — ${allTs.length} items</div>
-      <div style="font-family:var(--f3);font-size:11px;font-weight:600;color:${verdict.col};padding:3px 10px;border-radius:5px;background:${verdict.col}15;border:1px solid ${verdict.col}35;">${spanStr} total · ${verdict.txt}</div>
+      <div style="font-family:var(--f3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);">⏱ HOD Tick Audit Trail — ${events.length} events (${origTs.length} original · ${retickTs.length} retick)</div>
+      ${wasEdited?`<span style="font-family:var(--f3);font-size:10px;padding:2px 9px;border-radius:4px;background:rgba(255,184,0,.12);color:var(--c3);border:1px solid rgba(255,184,0,.3);">🔄 This log was edited after initial save</span>`:''}
     </div>
-    <div style="display:flex;flex-direction:column;max-height:220px;overflow-y:auto;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <div style="flex:1;min-width:180px;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;">
+        <div style="font-family:var(--f3);font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Original Ticks</div>
+        <div style="font-family:var(--f3);font-size:12px;font-weight:600;color:${origVerdict.col};">${origVerdict.txt}</div>
+        ${origTs.length>1?`<div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Spread: ${spanStr(origSpanSec)} · ${origTs.length} items</div>`:''}
+      </div>
+      ${hasRetick?`<div style="flex:1;min-width:180px;background:rgba(255,184,0,.05);border:1px solid rgba(255,184,0,.25);border-radius:7px;padding:8px 12px;">
+        <div style="font-family:var(--f3);font-size:9px;text-transform:uppercase;color:var(--c3);margin-bottom:4px;">Edit Re-ticks</div>
+        <div style="font-family:var(--f3);font-size:12px;font-weight:600;color:var(--c3);">⚠ ${retickTs.length} item(s) re-ticked during later edit</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">First retick: ${fmtTsFull(Math.min(...retickTs))}</div>
+      </div>`:''}
+    </div>
+    ${lateHtml}
+    <div style="display:flex;gap:12px;margin-bottom:8px;font-family:var(--f3);font-size:10px;color:var(--muted);">
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c1);"></span>Original tick</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c3);"></span>Re-ticked during edit</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c4);"></span>HOD-critical item</span>
+    </div>
+    <div style="display:flex;flex-direction:column;max-height:260px;overflow-y:auto;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
       ${rows}
     </div>
     <div style="display:flex;gap:20px;margin-top:8px;font-family:var(--f3);font-size:10px;color:var(--muted);">
-      <span>First tick: <strong style="color:var(--text);">${fmtTsFull(tMin)}</strong></span>
-      <span>Last tick: <strong style="color:var(--text);">${fmtTsFull(tMax)}</strong></span>
+      <span>First event: <strong style="color:var(--text);">${fmtTsFull(tMin)}</strong></span>
+      <span>Last event: <strong style="color:var(--text);">${fmtTsFull(tMax)}</strong></span>
     </div>
   </div>`;
 }
